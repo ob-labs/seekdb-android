@@ -5,7 +5,7 @@
 - **Room / SupportSQLite on SeekDB** (see `docs/seekdb-android/room-sqlite-compat.md`): SQL normalization, `PRAGMA`/`sqlite_master` routing, nested transaction depth, invalidation DDL rewrites, statement bind quirks.
 - **Android embed + engine alignment** (see `docs/seekdb-android/seekdb-engine-android.md`):
   - **seekdb** (Android cross-build): RS tablet reporting skipped on `__ANDROID__`; DDL log text suppressed for embedded; CPU topology and signal-handler behavior safe for app processes; DML `is_ignore_` + duplicate-key handling aligned with `INSERT IGNORE`; `seekdb_stmt_execute` routes write SQL through `seekdb_execute_update`.
-  - **seekdb-android**: nested `beginTransaction` compatible with Room; JNI logs `dlopen` failure; androidTest Room classpath deps (`lifecycle-livedata`, `room-paging`); `libseekdb.so` supplied via `jniLibs` (gitignored).
+  - **seekdb-android**: nested `beginTransaction` compatible with Room; JNI logs `dlopen` failure; androidTest Room classpath deps (`lifecycle-livedata`, `room-paging`); `libseekdb.so` auto-downloaded from S3 by the `downloadLibseekdb` Gradle task into `build/generated/libseekdb/jniLibs/` (gitignored).
 - Android library project skeleton with Gradle module and JNI CMake build.
 - Native API Java wrappers:
   - `SeekdbClient`

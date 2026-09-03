@@ -3,6 +3,13 @@ plugins {
     id "com.vanniktech.maven.publish"
 }
 
+// Single source of truth for the packaged ABIs: drives both the NDK/jniLibs ABI filter
+// and the prebuilt-engine download set, so the two can never drift (drifting them could
+// otherwise ship an AAR without the engine while the build stays green).
+// Default arm64-v8a; override with -PLIBSEEKDB_ABIS=x86_64,...
+def libseekdbAbis =
+        ((findProperty("LIBSEEKDB_ABIS") ?: "arm64-v8a") as String).split(",")*.trim().findAll { it }
+
 android {
     namespace "com.oceanbase.seekdb.android"
     compileSdk 36
@@ -19,7 +26,10 @@ android {
             }
         }
         ndk {
-            abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+            // Driven by the single ABI list at the top of this file (LIBSEEKDB_ABIS), so the
+            // filter always matches the ABIs the download task fetches; add new ABIs in one
+            // place (top of file) once their zips are uploaded by the engine CI.
+            abiFilters(*libseekdbAbis)
         }
     }
 
@@ -50,48 +60,16 @@ mavenPublishing {
             (findProperty("GROUP") ?: "com.oceanbase.seekdb") as String,
             "seekdb-android",
             (findProperty("VERSION_NAME") ?: "0.1.0-SNAPSHOT") as String)
-    pom {
-        name = findProperty("POM_NAME") ?: "seekdb-android"
-        description =
-                findProperty("POM_DESCRIPTION")
-                        ?: "SeekDB Android compatibility and native library"
-        def pomUrl = findProperty("POM_URL")
-        if (pomUrl != null) {
-            url = pomUrl
-        }
-        def licenceName = findProperty("POM_LICENCE_NAME")
-        def licenceUrl = findProperty("POM_LICENCE_URL")
-        if (licenceName != null && licenceUrl != null) {
-            licenses {
-                license {
-                    name = licenceName
-                    url = licenceUrl
-                    distribution = findProperty("POM_LICENCE_DIST") ?: "repo"
-                }
-            }
-        }
-        def devId = findProperty("POM_DEVELOPER_ID")
-        if (devId != null) {
-            developers {
-                developer {
-                    id = devId
-                    name = findProperty("POM_DEVELOPER_NAME")
-                    url = findProperty("POM_DEVELOPER_URL")
-                }
-            }
-        }
-        def scmUrl = findProperty("POM_SCM_URL")
-        if (scmUrl != null) {
-            scm {
-                url = scmUrl
-                connection = findProperty("POM_SCM_CONNECTION")
-                developerConnection = findProperty("POM_SCM_DEV_CONNECTION")
-            }
-        }
-    }
-    // Maven Central + signed publications (requires Sonatype credentials and signing keys).
-    publishToMavenCentral(/* automaticRelease */ true)
-    signAllPublications()
+    // POM name/description/url/license/developer/scm come from the POM_* properties
+    // in gradle.properties via the plugin's pomFromGradleProperties() behavior;
+    // do not add them manually here or they are duplicated in the generated POM.
+    //
+    // Central publishing and GPG signing are NOT enabled here — the plugin only wires
+    // them when the corresponding Gradle properties are set (SONATYPE_HOST=CENTRAL_PORTAL,
+    // SONATYPE_AUTOMATIC_RELEASE, RELEASE_SIGNING_ENABLED). CI sets those via
+    // ORG_GRADLE_PROJECT_* env (see .github/workflows and docs/seekdb-android/testing-and-release.md §8).
+    // Leaving them off by default keeps local `publishToMavenLocal` and JitPack builds
+    // key-less and credential-less for any version.
 }
 
 dependencies {
@@ -108,3 +86,103 @@ dependencies {
     androidTestImplementation("androidx.room:room-paging:2.6.1")
     androidTestAnnotationProcessor("androidx.room:room-compiler:2.6.1")
 }
+
+// --- Prebuilt libseekdb (native engine) download --------------------------
+// libseekdb.so is built by remote CI and hosted on S3 (see gradle.properties,
+// LIBSEEKDB_URL_PREFIX). Zip naming: <prefix>libseekdb-android-<abi>.zip.
+// Downloaded .so files land in build/generated/libseekdb/jniLibs/<abi>/ (wired
+// into the AAR via jniLibs.srcDirs), so consumers do not download anything at
+// runtime. Manually placed files under src/main/jniLibs/<abi>/ remain the
+// offline fallback; skip the download entirely with -PLIBSEEKDB_URL_PREFIX=.
+def libseekdbUrlPrefix = (findProperty("LIBSEEKDB_URL_PREFIX") ?: "") as String
+def libseekdbForce = ((findProperty("LIBSEEKDB_FORCE_DOWNLOAD") ?: "false") as String).toBoolean()
+def libseekdbJniLibsDir = layout.buildDirectory.dir("generated/libseekdb/jniLibs")
+
+// Downloaded .so is authoritative when the prefix is set; src/main/jniLibs is the
+// offline/manual fallback and is only wired in when downloads are disabled.
+// Keeping them mutually exclusive avoids AGP "Duplicate resources" on jniLibs.
+def libseekdbJniLibsSrc = libseekdbJniLibsDir.get().asFile
+android.sourceSets.main.jniLibs.srcDirs = [libseekdbJniLibsSrc]
+if (!libseekdbUrlPrefix) {
+    android.sourceSets.main.jniLibs.srcDirs += "src/main/jniLibs"
+}
+
+def downloadUrl(String urlStr, File dest) {
+    def conn = (HttpURLConnection) new URL(urlStr).openConnection()
+    conn.instanceFollowRedirects = true
+    conn.connectTimeout = 30_000
+    conn.readTimeout = 120_000
+    try {
+        int code = conn.responseCode
+        // S3 returns 403 (AccessDenied) for missing keys in this public bucket, 404 in others.
+        if (code == 404 || code == 403) {
+            throw new FileNotFoundException("HTTP ${code}: ${urlStr}")
+        }
+        if (code < 200 || code >= 300) {
+            throw new GradleException("Failed to download ${urlStr}: HTTP ${code}")
+        }
+        dest.parentFile.mkdirs()
+        dest.withOutputStream { out ->
+            out << conn.inputStream
+        }
+    } finally {
+        conn.disconnect()
+    }
+}
+
+def installLibseekdb(String abi, String prefix, Provider<Directory> outDir) {
+    def zipUrl = "${prefix}libseekdb-android-${abi}.zip"
+    def zipFile = file("${buildDir}/libseekdb/${abi}.zip")
+    try {
+        logger.lifecycle("downloadLibseekdb: downloading ${zipUrl}")
+        downloadUrl(zipUrl, zipFile)
+    } catch (FileNotFoundException e) {
+        logger.warn(
+                "downloadLibseekdb: no prebuilt artifact for ABI ${abi} " +
+                        "(${e.message}); this ABI will not be included in the AAR")
+        return null
+    }
+    def zipped = zipTree(zipFile).matching { include "**/libseekdb.so" }
+    if (zipped.isEmpty()) {
+        throw new GradleException("downloadLibseekdb: ${zipFile} does not contain libseekdb.so")
+    }
+    def extractedSo = zipped.singleFile
+    def target = outDir.get().file("${abi}/libseekdb.so").asFile
+    target.parentFile.mkdirs()
+    copy {
+        from extractedSo
+        into target.parentFile
+    }
+    logger.lifecycle("downloadLibseekdb: installed ${target} (${extractedSo.length()} bytes)")
+    return target
+}
+
+tasks.register("downloadLibseekdb") {
+    description = "Download prebuilt libseekdb.so for the configured ABIs into build/generated/libseekdb/jniLibs"
+    group = "seekdb"
+
+    inputs.property("urlPrefix", libseekdbUrlPrefix)
+    inputs.property("force", libseekdbForce)
+    inputs.property("abis", libseekdbAbis)
+    libseekdbAbis.each { abi ->
+        outputs.file(libseekdbJniLibsDir.map { it.file("${abi}/libseekdb.so") })
+    }
+
+    onlyIf { libseekdbUrlPrefix }
+    // force=true must always re-download, even when inputs/outputs are unchanged,
+    // so repeated -PLIBSEEKDB_FORCE_DOWNLOAD=true invocations refresh stale binaries.
+    outputs.upToDateWhen { !libseekdbForce }
+
+    doLast {
+        def installed = libseekdbAbis
+                .collect { abi -> installLibseekdb(abi, libseekdbUrlPrefix, libseekdbJniLibsDir) }
+                .findAll { it != null }
+        if (installed.isEmpty()) {
+            throw new GradleException(
+                    "downloadLibseekdb: no libseekdb.so installed for ${libseekdbAbis} " +
+                            "from ${libseekdbUrlPrefix}; the AAR would ship without the native engine")
+        }
+    }
+}
+
+tasks.named("preBuild") { dependsOn("downloadLibseekdb") }

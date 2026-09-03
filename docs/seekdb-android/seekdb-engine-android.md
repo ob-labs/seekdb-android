@@ -40,22 +40,40 @@
 - **`seekdb_android_jni.cpp`**：`dlopen("libseekdb.so")` 失败时 **`__android_log_print`（ERROR）**，便于区分「库未打包」与引擎内部错误。
 - **`build.gradle`**：`androidTest` 中 **Room** 依赖需 **`lifecycle-livedata`**、**`room-paging`** 以补全注解处理器 classpath（与 Room 仪器测试一致）。
 
-`libseekdb.so` 默认 **不提交**（见仓库根 `.gitignore` 的 `jniLibs` 规则）；本地需从 seekdb 的 Android 构建产物拷贝，见下节。
+`libseekdb.so` 默认 **不提交**（见仓库根 `.gitignore` 的 `*.so` 规则）。预编译产物由**远程 CI 构建并上传 S3**，seekdb-android 构建时通过 `downloadLibseekdb` Gradle task 自动拉取到 `build/generated/libseekdb/jniLibs/<abi>/` 并打进 AAR，见下节。
 
-## 4. 编译 seekdb（Android `libseekdb.so`）
+## 4. 获取 Android `libseekdb.so`
 
-在 seekdb 仓库（与 seekdb-android 同级克隆时）文档 [docs/developer-guide/zh/android.md](../../../seekdb/docs/developer-guide/zh/android.md) 中：
+### 4.1 自动下载（默认）
+
+在 `gradle.properties` 配置 S3 URL 前缀（`LIBSEEKDB_URL_PREFIX`），zip 命名约定为 `<prefix>libseekdb-android-<abi>.zip`（当前以 **arm64-v8a** 为主，其它 ABI 按团队流程同步；缺失的 ABI 会告警跳过）：
+
+```bash
+# 构建时自动下载（Gradle 增量缓存，输入未变则 UP-TO-DATE；强制刷新）：
+./gradlew :seekdb-android:assembleDebug
+./gradlew :seekdb-android:downloadLibseekdb -PLIBSEEKDB_FORCE_DOWNLOAD=true
+```
+
+下载产物解压到 `seekdb-android/build/generated/libseekdb/jniLibs/<abi>/libseekdb.so`，随 AAR 发布，消费端无需再手动拷贝。需要临时切换制品源时用 `-PLIBSEEKDB_URL_PREFIX=...` 覆盖；`LIBSEEKDB_ABIS`（逗号分隔）控制拉取的 ABI 列表。若配置了 prefix 但**没有任何 ABI 安装成功**，构建会直接失败（避免发布无引擎的 AAR）。
+
+### 4.2 手动放置（离线回退）
+
+手动放置的 `.so` 仅在**下载被禁用时**生效：`-PLIBSEEKDB_URL_PREFIX=`（空值）后，`src/main/jniLibs/<abi>/` 才会参与打包。设置 prefix 时下载产物是权威来源，手工目录不参与打包（两者互斥，避免 AGP 重复资源报错）。例如调试 seekdb 自定义产物、或构建机无外网时：
+
+```bash
+./gradlew :seekdb-android:assembleDebug -PLIBSEEKDB_URL_PREFIX=
+```
+
+并把 `libseekdb.so` 放到 `seekdb-android/src/main/jniLibs/arm64-v8a/libseekdb.so`（当前集成以 **arm64-v8a** 为主；其它 ABI 按团队流程同步）。
+
+### 4.3 制品来源（seekdb 编译参考）
+
+预编译 zip 的原始产物由 seekdb 仓库的 Android 交叉编译生成（seekdb 仓库与 seekdb-android 同级克隆时，见 [docs/developer-guide/zh/android.md](../../../seekdb/docs/developer-guide/zh/android.md)）：
 
 1. `./build.sh release --android --init`（依赖初始化）
-2. `cd build_android_release && make libseekdb -j$(nproc)`
+2. `cd build_android_release && make libseekdb -j$(nproc)`，产物路径一般为 `build_android_release/src/include/libseekdb.so`
 
-产物路径一般为：
-
-`build_android_release/src/include/libseekdb.so`
-
-将 `libseekdb.so` 放到 seekdb-android 模块：
-
-`seekdb-android/src/main/jniLibs/arm64-v8a/libseekdb.so`（当前集成以 **arm64-v8a** 为主；其它 ABI 按团队流程同步）。
+远程 CI 将各 ABI 产物打包为 `libseekdb-android-<abi>.zip` 上传 S3，即 4.1 拉取的来源。
 
 ## 5. 验证 seekdb-android
 

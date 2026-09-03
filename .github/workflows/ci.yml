@@ -39,9 +39,16 @@ jobs:
           name: instrumentation-test-results ${{ matrix.api-level }}
           path: ./**/build/reports/androidTests/connected/**
 
-      - name: Upload snapshot (main only)
+      # Publish to Central on main push. Gated on the secrets so the step is
+      # skipped while the com.oceanbase namespace membership is pending (§8):
+      # without credentials the vanniktech publish would fail the build.
+      - name: Publish to Maven (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.SonatypeUsername != '' && secrets.SigningInMemoryKey != ''
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.SonatypeUsername }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.SonatypePassword }}
+          # GPG signing (signAllPublications()); publish fails without these secrets.
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SigningInMemoryKey }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SigningInMemoryKeyId }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SigningInMemoryKeyPassword }}
         run: ./gradlew publish
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'

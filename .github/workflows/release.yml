@@ -1,0 +1,70 @@
+name: release
+
+# Tag-triggered release: `git tag v0.1.0 && git push origin v0.1.0`.
+#
+# Distribution decision: JitPack. Once the repo lives at `ob-labs/seekdb-android`,
+# every `v*` tag is built on demand by JitPack (jitpack.yml pins JDK 17) and served
+# at https://jitpack.io — no Sonatype account or secrets needed. This workflow's job
+# is then a convenience + manual fallback: run unit tests, build the release AARs for
+# both modules, and attach them to the GitHub Release.
+#
+# Optional later: after the com.oceanbase namespace membership + the 5 Sonatype
+# secrets are in place, the same tag also publishes to Maven Central (step below,
+# gated on the secrets being configured). Instrumentation tests are covered by
+# ci.yml on `main` before tagging.
+
+permissions:
+  contents: write # create GitHub Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for changelog/previous-tag lookups
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "adopt"
+
+      - name: Unit tests
+        run: ./gradlew :seekdb-android:testDebugUnitTest --stacktrace
+
+      # JitPack fallback: the release AARs are attached to the GitHub Release.
+      - name: Build release AARs
+        run: ./gradlew :seekdb-android:assembleRelease :seekdb-android-inspection:assembleRelease --stacktrace
+
+      # Skip until the Sonatype secrets are configured (testing-and-release.md
+      # §8.3); with no secrets the vanniktech publish fails. Enabling Central
+      # publishing additionally requires the com.oceanbase namespace membership (§8.1).
+      - name: Publish to Maven Central (tag release)
+        if: ${{ secrets.SonatypeUsername != '' && secrets.SigningInMemoryKey != '' }}
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.SonatypeUsername }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.SonatypePassword }}
+          # GPG signing (signAllPublications()); publish fails without these secrets.
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SigningInMemoryKey }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SigningInMemoryKeyId }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SigningInMemoryKeyPassword }}
+        run: ./gradlew publish -PVERSION_NAME=${GITHUB_REF_NAME#v} --stacktrace
+
+      # Both AARs are mandatory for the Release fallback — a release without them
+      # is broken, so fail instead of creating an empty Release.
+      - name: Create GitHub Release with AARs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          MAIN_AAR=seekdb-android/build/outputs/aar/seekdb-android-release.aar
+          INSP_AAR=seekdb-android-inspection/build/outputs/aar/seekdb-android-inspection-release.aar
+          for f in "$MAIN_AAR" "$INSP_AAR"; do
+            [ -f "$f" ] || { echo "missing $f" >&2; exit 1; }
+          done
+          gh release create "$GITHUB_REF_NAME" "$MAIN_AAR" "$INSP_AAR" --generate-notes

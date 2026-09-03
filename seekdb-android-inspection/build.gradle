@@ -1,6 +1,7 @@
 plugins {
     id "com.android.library"
     id "com.google.protobuf" version "0.9.4"
+    id "com.vanniktech.maven.publish"
 }
 
 android {
@@ -47,4 +48,25 @@ dependencies {
     api("org.jspecify:jspecify:1.0.0")
     api("com.google.protobuf:protobuf-javalite:3.25.3")
     api(project(":seekdb-android"))
+}
+
+// Published alongside :seekdb-android so consumers can enable Database Inspector
+// support (see inspector-setup.md). Same GROUP/VERSION_NAME as the main module;
+// POM name/description are overridden below so the two artifacts are distinct on Central.
+group = findProperty("GROUP") ?: "com.oceanbase.seekdb"
+version = findProperty("VERSION_NAME") ?: "0.1.0-SNAPSHOT"
+
+// Override the shared POM_* gradle.properties (which describe the main module)
+// so this module's POM carries its own identity.
+project.setProperty("POM_NAME", "seekdb-android-inspection")
+project.setProperty("POM_DESCRIPTION", "SeekDB Android Database Inspector integration (androidx.sqlite.inspection protocol)")
+
+mavenPublishing {
+    coordinates(
+            (findProperty("GROUP") ?: "com.oceanbase.seekdb") as String,
+            "seekdb-android-inspection",
+            (findProperty("VERSION_NAME") ?: "0.1.0-SNAPSHOT") as String)
+    // Maven Central + signed publications (same requirements as the main module).
+    publishToMavenCentral(/* automaticRelease */ true)
+    signAllPublications()
 }

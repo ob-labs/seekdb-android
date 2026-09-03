@@ -6,9 +6,10 @@
 /.idea/workspace.xml
 /.idea/libraries
 .DS_Store
-/build
+.cxx
+*.so
+build
 seekdb-android-inspection/build/
 /captures
 
-# Prebuilt JNI libs (build or copy locally; do not commit binaries)
-seekdb-android/src/main/jniLibs/**/*.so
+# Native engine binaries are downloaded at build time or copied locally; never commit them.

@@ -5,8 +5,8 @@
 - JDK 17
 - Android SDK and platform tools
 - Use project `./gradlew` (Gradle wrapper, pinned to 9.3.1)
-- Optional for full integration: `libseekdb.so` available to runtime loader
-- See **`docs/seekdb-android/seekdb-engine-android.md`** for building **`libseekdb.so`** in the **seekdb** repo, copying into `seekdb-android/src/main/jniLibs/`, and why **`pm clear`** may be needed before instrumentation runs.
+- Optional for full integration: `libseekdb.so` available to runtime loader (fetched automatically by the `downloadLibseekdb` Gradle task from S3; disable with `-PLIBSEEKDB_URL_PREFIX=` to use manually placed files)
+- See **`docs/seekdb-android/seekdb-engine-android.md`** for how `libseekdb.so` is fetched/packaged, how to build it in the **seekdb** repo (source of the S3 artifacts), and why **`pm clear`** may be needed before instrumentation runs.
 
 ## Build
 

@@ -1,6 +1,6 @@
 # seekdb-android
 
-[![ci](https://github.com/oceanbase/seekdb-android/actions/workflows/ci.yml/badge.svg)](https://github.com/oceanbase/seekdb-android/actions/workflows/ci.yml)
+[![ci](https://github.com/ob-labs/seekdb-android/actions/workflows/ci.yml/badge.svg)](https://github.com/ob-labs/seekdb-android/actions/workflows/ci.yml)
 
 Android library: **SeekDB** over JNI, with a **Room / `SupportSQLite`** surface similar to typical SQLite-on-Android usage (broader `SQLiteDatabase`-shaped APIs are on the roadmap).
 
@@ -10,11 +10,25 @@ Use **`SeekdbCompat.factory()`** as the `SupportSQLiteOpenHelper.Factory` when b
 
 ### 1. Gradle
 
-Published coordinates (pin a version from release notes or [`docs/seekdb-android/testing-and-release.md`](docs/seekdb-android/testing-and-release.md)):
+**JitPack (current distribution):** add the JitPack repository and depend on the module-scoped coordinate — the AAR (with `libseekdb.so` already packaged) is built on demand from each `v*` tag:
 
 ```gradle
-implementation "com.oceanbase.seekdb:seekdb-android:${version}"
+// settings.gradle
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url "https://jitpack.io" }
+    }
+}
+
+// app/build.gradle
+dependencies {
+    implementation "com.github.ob-labs.seekdb-android:seekdb-android:${version}"
+}
 ```
+
+See the **JitPack (distribution)** section below for details (including the inspection add-on).
 
 Local checkout:
 
@@ -23,9 +37,11 @@ Local checkout:
 ./gradlew :seekdb-android:publishToMavenLocal
 ```
 
-### 2. Ship `libseekdb.so`
+### 2. Native engine (`libseekdb.so`)
 
-Package **`libseekdb.so`** per ABI (e.g. under `app/src/main/jniLibs/<abi>/`). Without it, `SeekdbClient.isNativeAvailable()` is false and the compat layer cannot open the engine.
+Since the engine binary is packaged into the published AAR at build time, consumers get it automatically. In a **local checkout**, the `downloadLibseekdb` Gradle task fetches prebuilt `libseekdb.so` from the S3 prefix configured in `gradle.properties` (`LIBSEEKDB_URL_PREFIX`) into `build/generated/libseekdb/jniLibs/<abi>/` (Gradle-incremental: re-runs only when inputs change; `-PLIBSEEKDB_FORCE_DOWNLOAD=true` to refresh). To use a manually placed binary instead, disable downloads with `-PLIBSEEKDB_URL_PREFIX=` and put the `.so` under `src/main/jniLibs/<abi>/`.
+
+Without the native library, `SeekdbClient.isNativeAvailable()` is false and the compat layer cannot open the engine.
 
 At runtime you can probe:
 
@@ -66,7 +82,7 @@ Prefer **internal** paths (`getFilesDir()`, `getDatabasePath`) first when valida
 
 ### 5. Database Inspector (debug)
 
-Add **`debugImplementation`** of `seekdb-android-inspection` and follow [`docs/seekdb-android/inspector-setup.md`](docs/seekdb-android/inspector-setup.md) (includes AndroidX inspection snapshot repo).
+Add **`seekdb-android-inspection`** as `debugImplementation` — e.g. `debugImplementation "com.github.ob-labs.seekdb-android:seekdb-android-inspection:${version}"` (or `debugImplementation files("libs/seekdb-android-inspection-<version>.aar")` when using the GitHub Release AAR fallback) — and follow [`docs/seekdb-android/inspector-setup.md`](docs/seekdb-android/inspector-setup.md) (includes the AndroidX inspection snapshot repository).
 
 ---
 
@@ -88,13 +104,45 @@ Room.databaseBuilder(context, AppDb.class, "app.db")
 
 Do **not** mix sqlite-android and seekdb-android on the same classpath expecting two SQLite backends.
 
-## JitPack (optional)
+## JitPack (distribution)
 
-Repository **`https://jitpack.io`**, dependency **`com.github.oceanbase:seekdb-android:<tag>`** (repo **`oceanbase/seekdb-android`**). This repo includes `jitpack.yml` (JDK 17). Verify the resolved artifact after the first JitPack build.
+The repository distributes through **JitPack** (`jitpack.yml` pins JDK 17 for AGP 8). Pushing a `v*` tag makes the artifacts available on https://jitpack.io, built on demand by JitPack — no Sonatype account, signing key, or release AAR required. Both `:seekdb-android` and `:seekdb-android-inspection` are published.
 
-## Maven Central
+This is a **multi-module Gradle project**, so JitPack exposes one coordinate per module (form `com.github.<org>.<repo>:<module>`), plus an aggregate coordinate that pulls every module:
 
-Releases use **`com.vanniktech.maven.publish`**. On **`master` branch push**, CI runs **`./gradlew publish`** when `SonatypeUsername` / `SonatypePassword` and signing keys are configured (see `.github/workflows/ci.yml`).
+```gradle
+// main library only (recommended — the inspection add-on is debug-only)
+implementation "com.github.ob-labs.seekdb-android:seekdb-android:${version}"
+
+// inspection add-on (Database Inspector, debug builds only)
+debugImplementation "com.github.ob-labs.seekdb-android:seekdb-android-inspection:${version}"
+
+// aggregate: every published module (includes the inspection add-on)
+implementation "com.github.ob-labs:seekdb-android:${version}"
+```
+
+`${version}` is a release tag such as `0.1.0`. After the first tag, look up `ob-labs/seekdb-android` on https://jitpack.io to confirm the exact module list and coordinates.
+
+## GitHub Release AAR (fallback)
+
+Tag releases additionally attach both release AARs to the GitHub Release (`release.yml`): download `seekdb-android-release.aar` (the library; the engine `libseekdb.so` is already packaged inside) and, if needed, `seekdb-android-inspection-release.aar`, then consume them as file dependencies:
+
+1. Put the AAR under `app/libs/` (renaming with the version helps, e.g. `seekdb-android-0.1.0.aar`).
+2. Declare it:
+
+```groovy
+dependencies {
+    implementation files("libs/seekdb-android-0.1.0.aar")
+}
+```
+
+A file-based AAR has **no POM**, so Gradle does not resolve transitive dependencies: the app must also declare what the module's API references (`androidx.sqlite:sqlite` — normally already present via Room — and `androidx.annotation:annotation`).
+
+For the inspector AAR, add it as `debugImplementation files(...)` and follow [`docs/seekdb-android/inspector-setup.md`](docs/seekdb-android/inspector-setup.md), which covers the `androidx.inspection` snapshot repository and the extra dependencies the file AAR does not pull in on its own (the `seekdb-android` AAR, `protobuf-javalite`, `jspecify`).
+
+## Maven Central (future, optional)
+
+Can be enabled later once the `com.oceanbase` namespace membership and the Sonatype secrets are in place (see `docs/seekdb-android/testing-and-release.md` §8). Releases use **`com.vanniktech.maven.publish`**; on a tag push, `release.yml` runs **`./gradlew publish`** when the Sonatype credentials (`SonatypeUsername` / `SonatypePassword`) and the GPG signing keys (`SigningInMemoryKey` / `SigningInMemoryKeyId` / `SigningInMemoryKeyPassword`) are configured as repo secrets, publishing `com.oceanbase.seekdb:seekdb-android`. Until then the **JitPack** channel above is the distribution.
 
 ---
 
@@ -102,7 +150,7 @@ Releases use **`com.vanniktech.maven.publish`**. On **`master` branch push**, CI
 
 ### From stock Room (framework SQLite)
 
-1. Add **seekdb-android** + ship **`libseekdb.so`** for your ABIs.  
+1. Add **seekdb-android** (the engine `.so` is packaged into the published AAR; nothing extra to ship).  
 2. Add **`.openHelperFactory(SeekdbCompat.factory())`** (or `SeekdbSQLite.supportOpenHelperFactory()`) to `Room.databaseBuilder(...)`.  
 3. Run your usual schema / CRUD / invalidation tests; fix SQL only where the engine dialect differs from SQLite ([compat matrix](docs/seekdb-android/compat-contract-matrix.md), [Room notes](docs/seekdb-android/room-sqlite-compat.md)).
 
@@ -111,7 +159,7 @@ Direct `android.database.sqlite.SQLiteDatabase` usage outside Room is unchanged 
 ### From Room + sqlite-android
 
 1. **Remove** the `io.requery:sqlite-android` dependency (and orphans).  
-2. **Add** seekdb-android + **`libseekdb.so`**; attach **`SeekdbCompat.factory()`** (or `SeekdbSQLite.supportOpenHelperFactory()`) to `Room.databaseBuilder`.  
+2. **Add** seekdb-android (engine `.so` included in the AAR); attach **`SeekdbCompat.factory()`** (or `SeekdbSQLite.supportOpenHelperFactory()`) to `Room.databaseBuilder`.  
 3. Replace any **`io.requery.android.database.*`** imports with this library’s APIs or access DB only through Room / `SupportSQLite`.  
 4. **Inspector:** add **`seekdb-android-inspection`** per [inspector-setup.md](docs/seekdb-android/inspector-setup.md).
 
