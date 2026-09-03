@@ -24,17 +24,20 @@
 - Stability gate:
   - no known deterministic leak in automated stress run.
 
-Current workflow (instrumented tests diverged from [sqlite-android `ci.yml`](https://github.com/requery/sqlite-android/blob/master/.github/workflows/ci.yml) once GitHub moved `macos-latest` to virtualized Apple Silicon runners, which cannot run any Android emulator — no nested virtualization / HVF, and x86 images are not supported on aarch64 hosts):
+Current workflow (instrumented tests currently **paused** — degraded gate):
 
 - GitHub Actions file: `.github/workflows/ci.yml` (workflow name `ci`)
 - `permissions: contents: read`
 - Triggers: **`on: [push, pull_request]`** (all branches)
-- Runner: **`ubuntu-latest`** with **KVM** enabled (hardware-accelerated emulator; the android-emulator-runner README recommends Ubuntu runners, which are 2-3x faster than macOS)
-- Matrix: **`api-level: [29]`**, emulator **`arch: x86_64`** (host arch), NDK `28.2.13676358` + CMake `3.22.1` installed by the action (needed by `externalNativeBuild` for the JNI glue)
-- Engine ABI for the test build: **`-PLIBSEEKDB_ABIS=x86_64`** so the instrumentation APK contains the x86_64 `libseekdb.so` matching the emulator. The engine publishes per-commit zips under the S3 prefix pinned in `gradle.properties`; **the pinned commit must include `libseekdb-android-x86_64.zip`** (engine CI `build-libseekdb.yml` builds `arm64-v8a` + `x86_64` once the `android/x86_64` devdeps exist on the development-kit mirror). Until then the download task fails loudly rather than silently shipping/skipping tests.
-- Steps: checkout (`fetch-depth: 1`) → JDK 17 (**`distribution: adopt`**) → enable KVM → **`./gradlew connectedAndroidTest -PLIBSEEKDB_ABIS=x86_64 --stacktrace`** (root task; publishes `:seekdb-android` instrumentation) → upload `**/build/reports/androidTests/connected/**` → **`./gradlew publish`** when **`refs/heads/main` + `push`** with `SonatypeUsername` / `SonatypePassword` → `ORG_GRADLE_PROJECT_mavenCentral*`
+- Runner: **`ubuntu-latest`** (no emulator)
+- Steps: checkout (`fetch-depth: 1`) → JDK 17 (**`distribution: adopt`**) → install NDK `28.2.13676358` + CMake `3.22.1` (JNI glue via `externalNativeBuild`) → **`./gradlew :seekdb-android:testDebugUnitTest :seekdb-android:assembleDebug --stacktrace`** (JVM unit tests + debug assemble, packaging the arm64 engine from the pinned `LIBSEEKDB_URL_PREFIX`) → upload `**/build/reports/tests/**` → **`./gradlew publish`** when **`refs/heads/main` + `push`** with `SonatypeUsername` / `SonatypePassword` → `ORG_GRADLE_PROJECT_mavenCentral*`
 
-**Why not x86 emulator tests on a macOS runner?** The released engine (`LIBSEEKDB_ABIS`, `gradle.properties`) ships `arm64-v8a` only, and no x86 `libseekdb.so` is published — an x86/x86_64 emulator would load no engine and every engine test would fail or (with assumptions) silently skip. arm64 images cannot boot on hosted runners (no HVF). The x86_64-on-Ubuntu-KVM route above is the only hosted-runner option that actually exercises the engine.
+**Why instrumentation is paused (and how to re-enable it):** the released engine ships `arm64-v8a` only, and GitHub hosted runners cannot boot any Android emulator — macOS runners moved to virtualized Apple Silicon (no nested virtualization / HVF for arm64 images, and x86 images are unsupported on aarch64 hosts), while an x86/x86_64 emulator would load no engine (no x86_64 `libseekdb.so` published), so every engine test would fail or silently skip. Plan to restore full engine coverage on hosted runners (this was the original upstream layout, kept as a commented-out step in `ci.yml`):
+1. devdeps infra publishes the `android/26/x86_64` devdeps set (mirror currently has only `arm64`).
+2. Engine CI (`build-libseekdb.yml` in the seekdb repo, android job matrixed over `arm64-v8a` + `x86_64` via `ANDROID_ABI`) publishes `libseekdb-android-x86_64.zip` for a new commit.
+3. Point `gradle.properties` → `LIBSEEKDB_URL_PREFIX` at that commit and uncomment the emulator step in `ci.yml` (`ubuntu-latest` + KVM + `x86_64` image, `script` with `-PLIBSEEKDB_ABIS=x86_64`).
+
+The engine-side plumbing (seekdb repo): `build.sh` / `dep_create.sh` / `package/libseekdb/libseekdb-build.sh` accept `ANDROID_ABI` (default `arm64-v8a`, unchanged) and `deps/init/oceanbase.android.x86_64.deps` exists, so re-enabling is a config-only change.
 
 **Note:** Publishing is wired to the default branch **`main`**: on `push` to `main`, CI runs `./gradlew publish`, gated on the Sonatype secrets being configured — it stays skipped until §8.3 is ready (repo under a personal account, Central namespace pending). A `VERSION_NAME` ending in `-SNAPSHOT` is deployed to the Sonatype snapshot repository; a plain version is automatically closed and released on Maven Central (`automaticRelease = true`). Requires repo secrets `SonatypeUsername` / `SonatypePassword` plus the GPG signing secrets (`SigningInMemoryKey`, `SigningInMemoryKeyId`, `SigningInMemoryKeyPassword`).
 
