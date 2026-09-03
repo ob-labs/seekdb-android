@@ -2,12 +2,18 @@ seekdb-android
 
 Copyright (c) OceanBase and contributors.
 
-Licensing and third-party attribution (see `docs/seekdb-android/` for design and compatibility notes):
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+in compliance with the License. You may obtain a copy of the License at
+http://www.apache.org/licenses/LICENSE-2.0.
 
-- **Primary (current):** Proprietary / project license for OceanBase seekdb-android sources.
-- **Optional third-party Java:** If the project imports Apache-2.0–licensed (or other) third-party
-  sources, those files must retain their license headers and be listed here with NOTICE attribution
-  as required by the respective licenses (e.g. Apache-2.0 section 4(d)).
+Unless required by applicable law or agreed to in writing, software distributed under the License
+is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
+or implied. See the License for the specific language governing permissions and limitations under
+the License.
+
+Third-party attribution: if Apache-2.0-licensed (or other) third-party sources are imported, those
+files must retain their license headers and be listed here with NOTICE attribution as required by
+the respective licenses (e.g. Apache-2.0 section 4(d)).
 
 No third-party Java sources are bundled in this repository until explicitly merged; when that
 happens, this NOTICE must be updated with the exact version and copyright lines from each upstream
