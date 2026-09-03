@@ -42,11 +42,12 @@ jobs:
       - name: Build release AARs
         run: ./gradlew :seekdb-android:assembleRelease :seekdb-android-inspection:assembleRelease --stacktrace
 
-      # Skip until the Sonatype secrets are configured (testing-and-release.md
-      # §8.3); with no secrets the vanniktech publish fails. Enabling Central
-      # publishing additionally requires the com.oceanbase namespace membership (§8.1).
+      # Publish to Maven Central on tags once the Sonatype secrets are configured
+      # (testing-and-release.md §8.3). The secrets context is unavailable in `if:`
+      # expressions, so this step runs on every tag and no-ops until the secrets
+      # exist (undefined secrets resolve to empty). Central publishing additionally
+      # requires the com.oceanbase namespace membership (§8.1).
       - name: Publish to Maven Central (tag release)
-        if: ${{ secrets.SonatypeUsername != '' && secrets.SigningInMemoryKey != '' }}
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.SonatypeUsername }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.SonatypePassword }}
@@ -54,7 +55,12 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SigningInMemoryKey }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SigningInMemoryKeyId }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SigningInMemoryKeyPassword }}
-        run: ./gradlew publish -PVERSION_NAME=${GITHUB_REF_NAME#v} --stacktrace
+        run: |
+          if [ -z "$ORG_GRADLE_PROJECT_mavenCentralUsername" ] || [ -z "$ORG_GRADLE_PROJECT_signingInMemoryKey" ]; then
+            echo "::warning::Sonatype/GPG secrets not configured; skipping Central publish"
+            exit 0
+          fi
+          ./gradlew publish -PVERSION_NAME="${GITHUB_REF_NAME#v}" --stacktrace
 
       # Both AARs are mandatory for the Release fallback — a release without them
       # is broken, so fail instead of creating an empty Release.

@@ -39,11 +39,12 @@ jobs:
           name: instrumentation-test-results ${{ matrix.api-level }}
           path: ./**/build/reports/androidTests/connected/**
 
-      # Publish to Central on main push. Gated on the secrets so the step is
-      # skipped while the com.oceanbase namespace membership is pending (§8):
-      # without credentials the vanniktech publish would fail the build.
+      # Publish to Central on main push. The secrets context is unavailable in
+      # `if:` expressions, so this step runs on every main push and no-ops unless
+      # the Sonatype/GPG secrets are configured (undefined secrets resolve to empty,
+      # §8): without credentials the vanniktech publish would fail the build.
       - name: Publish to Maven (main only)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.SonatypeUsername != '' && secrets.SigningInMemoryKey != ''
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.SonatypeUsername }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.SonatypePassword }}
@@ -51,4 +52,9 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SigningInMemoryKey }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SigningInMemoryKeyId }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SigningInMemoryKeyPassword }}
-        run: ./gradlew publish
+        run: |
+          if [ -z "$ORG_GRADLE_PROJECT_mavenCentralUsername" ] || [ -z "$ORG_GRADLE_PROJECT_signingInMemoryKey" ]; then
+            echo "::warning::Sonatype/GPG secrets not configured; skipping Central publish"
+            exit 0
+          fi
+          ./gradlew publish
