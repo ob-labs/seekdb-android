@@ -35,6 +35,23 @@ jobs:
           java-version: "17"
           distribution: "adopt"
 
+      # assembleRelease compiles the JNI glue via externalNativeBuild (NDK
+      # 28.2.13676358 + CMake 3.22.1, matching seekdb-android/build.gradle).
+      # sdkmanager is not on PATH on the runner image, so call it via ANDROID_SDK_ROOT.
+      - name: Install NDK & CMake
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$SDK_ROOT/cmdline-tools/bin/sdkmanager"
+          fi
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager not found under $SDK_ROOT"
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "ndk;28.2.13676358" "cmake;3.22.1" >/dev/null
+
       - name: Unit tests
         run: ./gradlew :seekdb-android:testDebugUnitTest --stacktrace
 
