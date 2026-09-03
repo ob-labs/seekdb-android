@@ -7,7 +7,7 @@ on: [push, pull_request]
 
 jobs:
   ci:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -23,16 +23,32 @@ jobs:
           java-version: "17"
           distribution: "adopt"
 
+      # Hardware-accelerated emulators need KVM on Linux runners (see
+      # reactivecircus/android-emulator-runner README). GitHub's macOS runners are
+      # virtualized (arm64) and cannot run any Android emulator (no nested
+      # virtualization / HVF), so instrumented tests run on ubuntu + KVM instead.
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
       - name: Run Android tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api-level }}
+          # x86_64 image (host arch matches; fast under KVM). The test APK must
+          # contain a matching native engine: the seekdb engine only publishes
+          # arm64-v8a prebuilt zips on S3 today, so LIBSEEKDB_ABIS=x86_64 makes
+          # the download task fetch libseekdb-android-x86_64.zip (engine CI
+          # publishes it once android/x86_64 devdeps exist on the development-kit
+          # mirror; until then this step fails loudly instead of skipping tests).
+          arch: x86_64
+          ndk: "28.2.13676358"
+          cmake: "3.22.1"
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          # macos-latest runners are Apple Silicon (arm64); x86 system images
-          # cannot boot under QEMU on an aarch64 host, so match host arch.
-          arch: arm64-v8a
-          script: ./gradlew connectedAndroidTest --stacktrace
+          script: ./gradlew connectedAndroidTest -PLIBSEEKDB_ABIS=x86_64 --stacktrace
 
       - name: Upload results
         if: ${{ always() }}

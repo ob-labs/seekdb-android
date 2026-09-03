@@ -24,14 +24,17 @@
 - Stability gate:
   - no known deterministic leak in automated stress run.
 
-Current workflow (**aligned with [sqlite-android `ci.yml`](https://github.com/requery/sqlite-android/blob/master/.github/workflows/ci.yml)**):
+Current workflow (instrumented tests diverged from [sqlite-android `ci.yml`](https://github.com/requery/sqlite-android/blob/master/.github/workflows/ci.yml) once GitHub moved `macos-latest` to virtualized Apple Silicon runners, which cannot run any Android emulator — no nested virtualization / HVF, and x86 images are not supported on aarch64 hosts):
 
 - GitHub Actions file: `.github/workflows/ci.yml` (workflow name `ci`)
 - `permissions: contents: read`
 - Triggers: **`on: [push, pull_request]`** (all branches)
-- Runner: **`macos-latest`**
-- Matrix: **`api-level: [29]`**, emulator **`arch: x86`**, same `emulator-options` / `disable-animations` as upstream
-- Steps: checkout (`fetch-depth: 1`) → JDK 17 (**`distribution: adopt`**) → **`./gradlew connectedAndroidTest --stacktrace`** (root task; publishes `:seekdb-android` instrumentation) → upload `**/build/reports/androidTests/connected/**` → **`./gradlew publish`** when **`refs/heads/master` + `push`** with `SonatypeUsername` / `SonatypePassword` → `ORG_GRADLE_PROJECT_mavenCentral*`
+- Runner: **`ubuntu-latest`** with **KVM** enabled (hardware-accelerated emulator; the android-emulator-runner README recommends Ubuntu runners, which are 2-3x faster than macOS)
+- Matrix: **`api-level: [29]`**, emulator **`arch: x86_64`** (host arch), NDK `28.2.13676358` + CMake `3.22.1` installed by the action (needed by `externalNativeBuild` for the JNI glue)
+- Engine ABI for the test build: **`-PLIBSEEKDB_ABIS=x86_64`** so the instrumentation APK contains the x86_64 `libseekdb.so` matching the emulator. The engine publishes per-commit zips under the S3 prefix pinned in `gradle.properties`; **the pinned commit must include `libseekdb-android-x86_64.zip`** (engine CI `build-libseekdb.yml` builds `arm64-v8a` + `x86_64` once the `android/x86_64` devdeps exist on the development-kit mirror). Until then the download task fails loudly rather than silently shipping/skipping tests.
+- Steps: checkout (`fetch-depth: 1`) → JDK 17 (**`distribution: adopt`**) → enable KVM → **`./gradlew connectedAndroidTest -PLIBSEEKDB_ABIS=x86_64 --stacktrace`** (root task; publishes `:seekdb-android` instrumentation) → upload `**/build/reports/androidTests/connected/**` → **`./gradlew publish`** when **`refs/heads/main` + `push`** with `SonatypeUsername` / `SonatypePassword` → `ORG_GRADLE_PROJECT_mavenCentral*`
+
+**Why not x86 emulator tests on a macOS runner?** The released engine (`LIBSEEKDB_ABIS`, `gradle.properties`) ships `arm64-v8a` only, and no x86 `libseekdb.so` is published — an x86/x86_64 emulator would load no engine and every engine test would fail or (with assumptions) silently skip. arm64 images cannot boot on hosted runners (no HVF). The x86_64-on-Ubuntu-KVM route above is the only hosted-runner option that actually exercises the engine.
 
 **Note:** Publishing is wired to the default branch **`main`**: on `push` to `main`, CI runs `./gradlew publish`, gated on the Sonatype secrets being configured — it stays skipped until §8.3 is ready (repo under a personal account, Central namespace pending). A `VERSION_NAME` ending in `-SNAPSHOT` is deployed to the Sonatype snapshot repository; a plain version is automatically closed and released on Maven Central (`automaticRelease = true`). Requires repo secrets `SonatypeUsername` / `SonatypePassword` plus the GPG signing secrets (`SigningInMemoryKey`, `SigningInMemoryKeyId`, `SigningInMemoryKeyPassword`).
 
