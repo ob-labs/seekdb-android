@@ -41,11 +41,21 @@ jobs:
       #     script: ./gradlew connectedAndroidTest -PLIBSEEKDB_ABIS=x86_64 --stacktrace
 
       # JNI glue compiles via externalNativeBuild (NDK 28.2.13676358 + CMake
-      # 3.22.1, matching seekdb-android/build.gradle).
+      # 3.22.1, matching seekdb-android/build.gradle). sdkmanager is not on PATH
+      # on the runner image, so call it via ANDROID_SDK_ROOT.
       - name: Install NDK & CMake
         run: |
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "ndk;28.2.13676358" "cmake;3.22.1" >/dev/null
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$SDK_ROOT/cmdline-tools/bin/sdkmanager"
+          fi
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager not found under $SDK_ROOT"
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "ndk;28.2.13676358" "cmake;3.22.1" >/dev/null
 
       # JVM unit tests + debug assemble (packages the arm64 engine downloaded
       # from the pinned LIBSEEKDB_URL_PREFIX). Instrumentation coverage returns
