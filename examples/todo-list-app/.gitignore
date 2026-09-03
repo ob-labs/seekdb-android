@@ -1,16 +1,17 @@
 # Android / Gradle / IDE
 *.iml
-.idea
 .gradle
-.vscode
+.idea/*
 /local.properties
-/.idea/workspace.xml
-/.idea/libraries
 .DS_Store
 .cxx
 *.so
 build
-seekdb-android-inspection/build/
 /captures
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
 
 # Native engine binaries are downloaded at build time or copied locally; never commit them.

@@ -90,6 +90,16 @@ Add **`seekdb-android-inspection`** as `debugImplementation` — e.g. `debugImpl
 
 Design notes, testing, release: [`docs/seekdb-android/`](docs/seekdb-android/README.md).
 
+## Examples
+
+- **[Todo List App](examples/todo-list-app/)** — Room + MVVM sample wired to `SeekdbCompat.factory()`. It is a **self-contained Gradle project**: open `examples/todo-list-app` directly in Android Studio and press Run, or build from the command line:
+
+  ```bash
+  cd examples/todo-list-app && ./gradlew :app:assembleDebug
+  ```
+
+  It builds `seekdb-android` from source in this repository via `includeBuild("../..")`, so the sample stays in sync with the library without needing a published artifact.
+
 ## Alternative factory (`SeekdbSQLite`)
 
 If you standardize on the `SeekdbSQLite` entry point:
