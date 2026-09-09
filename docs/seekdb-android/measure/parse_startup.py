@@ -161,6 +161,7 @@ def main(argv):
             notes = {"sms_begin": "entry (0)", "sms_slogger_start": "server slogger start",
                      "sms_replay_all": "replayer done (bookend)",
                      "sms_read_ckpt": "read checkpoint", "sms_replay_slog": "slog replay",
+                     "sms_slog_fast": "embed server slog fast path (no incremental replay)",
                      "sms_start_log": "slogger start_log",
                      "sms_ckpt_replay": "replayer tail (get_replay_result copy-out)",
                      "sms_runtime_apply": "apply replay result (create runtime)",
