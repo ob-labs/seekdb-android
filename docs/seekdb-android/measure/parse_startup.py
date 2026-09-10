@@ -212,6 +212,7 @@ def main(argv):
                          "mls_palf_base_info": "construct_palf_base_info_",
                          "mls_palf_init_mem": "do_init_mem_ (state_mgr/mode_mgr/sw init)",
                          "mls_palf_append_sw": "append_disk_log_to_sw_ (or skip at tail)",
+                         "mls_palf_warm_fast": "embed warm manifest fast path (skip tail scan)",
                          "mls_apply": "apply_service start",
                          "mls_replay": "replay_service start",
                          "lms_slog_fast": "embed local slog fast path (no incremental replay)"}
