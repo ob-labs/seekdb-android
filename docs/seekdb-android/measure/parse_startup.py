@@ -204,10 +204,37 @@ def main(argv):
             mls_notes = {"mls_palf": "palf_env::start total (legacy; see mls_palf_reload/threads)",
                          "mls_palf_reload": "palf_env reload_palf_handle_impl_ (disk scan+load)",
                          "mls_palf_threads": "palf_env cb/io/shared_queue/log_loop thread start",
+                         "mls_palf_log_engine": "PalfHandleImpl::load LogEngine::load total",
+                         "mls_palf_meta_load": "LogEngine meta storage + construct_log_meta_",
+                         "mls_palf_redo_load": "LogStorage::load (tail scan / block read)",
+                         "mls_palf_holes_ck": "try_clear_up_holes_and_check_storage_integrity_",
+                         "mls_palf_integrity": "integrity_verify_ + LogEngine init finalize",
+                         "mls_palf_base_info": "construct_palf_base_info_",
+                         "mls_palf_init_mem": "do_init_mem_ (state_mgr/mode_mgr/sw init)",
+                         "mls_palf_append_sw": "append_disk_log_to_sw_ (or skip at tail)",
                          "mls_apply": "apply_service start",
                          "mls_replay": "replay_service start",
                          "lms_slog_fast": "embed local slog fast path (no incremental replay)"}
+            mls_reload = [(n, c) for n, c in mls if n.startswith("mls_palf_")
+                          and n not in ("mls_palf_reload", "mls_palf_threads")]
+            if mls_reload:
+                reload_total = sum(c for n, c in mls if n == "mls_palf_reload")
+                inner_total = sum(c for _, c in mls_reload)
+                print(f"  PALF reload drill-down ({len(mls_reload)} sub-steps,"
+                      f" inner sum {inner_total/1000:.1f} ms"
+                      + (f", mls_palf_reload {reload_total/1000:.1f} ms" if reload_total else "")
+                      + "):")
+                for name, cost in mls_reload:
+                    mark = ""
+                    if reload_total and cost > reload_total / 3:
+                        mark = " <-- dominant"
+                    elif inner_total and cost > inner_total / 3:
+                        mark = " <-- dominant"
+                    print(f"  | {name:<28} | {cost:>9,} us | {cost/1000:>7.1f} ms |"
+                          f" {mls_notes.get(name, '')}{mark}")
             for name, cost in mls:
+                if name in {n for n, _ in mls_reload}:
+                    continue
                 print(f"  | {name:<28} | {cost:>9,} us | {mls_notes.get(name, '')} |")
         if lsl:
             print("- online_local_log_ inner steps (lsl_*, within lson_local_log):")
