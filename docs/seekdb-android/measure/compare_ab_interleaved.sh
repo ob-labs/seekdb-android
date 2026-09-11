@@ -61,24 +61,34 @@ fi
 # A long batch used to end in `unzip: write error (disk full?)` around the 4th
 # run (ab19-ab22, ab28): every round stages a 148 MB libseekdb.so and rebuilds
 # the APK (~1.2 GB), so sweeps leftovers of our own runs and refuses to start
-# without headroom. Safety rules: only $TMPDIR/tmp.* dirs that still hold a
-# libseekdb.so are ours, and dirs touched in the last 15 min are skipped so an
-# in-flight remeasure.sh is never disturbed.
+# without headroom. Safety rules: only $TMPDIR/tmp.* entries that are recognisably
+# ours are removed -- a directory that still holds a libseekdb.so, or a bare file
+# that is a 100 MB+ aarch64 shared object (the manual-.so backup a killed
+# remeasure.sh leaves behind) -- and entries touched in the last 15 min are skipped
+# so an in-flight run is never disturbed.
 sweep_stale_temp() {
-  local tmp_root="${TMPDIR:-/tmp}" dir marker sz freed=0
+  local tmp_root="${TMPDIR:-/tmp}" entry marker sz freed=0
   marker="$(mktemp)"
   touch -t "$(date -v-15M '+%Y%m%d%H%M.%S')" "${marker}"
-  for dir in "${tmp_root%/}"/tmp.*; do
-    [ -d "${dir}" ] || continue
-    [ "${dir}" -nt "${marker}" ] && continue
-    find "${dir}" -name libseekdb.so -print -quit 2>/dev/null | grep -q . || continue
-    sz="$(du -sm "${dir}" 2>/dev/null | cut -f1)"
+  for entry in "${tmp_root%/}"/tmp.*; do
+    [ -e "${entry}" ] || continue
+    [ "${entry}" -nt "${marker}" ] && continue
+    if [ -d "${entry}" ]; then
+      find "${entry}" -name libseekdb.so -print -quit 2>/dev/null | grep -q . || continue
+    elif [ -f "${entry}" ]; then
+      [ "$(stat -f%z "${entry}" 2>/dev/null || echo 0)" -ge 100000000 ] || continue
+      file -b "${entry}" | grep -q "aarch64" || continue
+      file -b "${entry}" | grep -q "shared object" || continue
+    else
+      continue
+    fi
+    sz="$(du -sm "${entry}" 2>/dev/null | cut -f1)"
     freed=$((freed + ${sz:-0}))
-    rm -rf "${dir}"
+    rm -rf "${entry}"
   done
   rm -f "${marker}"
   if [ "${freed}" -gt 0 ]; then
-    echo "  swept ${freed} MB of stale engine temp dirs under ${tmp_root%/}"
+    echo "  swept ${freed} MB of stale engine temp leftovers under ${tmp_root%/}"
   fi
   return 0
 }

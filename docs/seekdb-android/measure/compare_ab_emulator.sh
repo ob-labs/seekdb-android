@@ -26,6 +26,11 @@ JNI_SO="${JNI_DIR}/libseekdb.so"
 GEN_JNI_DIR="${REPO_ROOT}/seekdb-android/build/generated/libseekdb/jniLibs/arm64-v8a"
 URL_BASE="https://oceanbase-seekdb-builds.s3.ap-southeast-1.amazonaws.com/libseekdb/all_commits"
 OUT_DIR="/tmp/seekdb_ab_compare_${BASE_SHORT}_vs_${OPT_SHORT}"
+# Scratch space for the two ~148 MB engine .so copies (zip unpack, APK check) and
+# for the tracked-file backups. The old per-call `mktemp -d` was never removed, so
+# every run leaked ~600 MB; everything scratch now lives here and goes away with
+# the exit trap.
+WORK_TMP="$(mktemp -d)"
 GP_BACKUP=""
 JNI_BACKUP=""
 
@@ -47,12 +52,51 @@ restore_repo_state() {
     fi
   fi
 }
-trap restore_repo_state EXIT
+
+cleanup() {
+  restore_repo_state
+  if [ -n "${WORK_TMP}" ]; then
+    rm -rf "${WORK_TMP}"
+  fi
+}
+trap cleanup EXIT
+
+# A run rebuilds two APKs (~2.4 GB of Gradle output) on top of the staged engine;
+# a full disk shows up as a truncated build or a half-written .so, so refuse to
+# start without headroom (same guard as remeasure.sh).
+require_free_space() {
+  local need_mb="${1:-5120}" avail_mb volume
+  volume="$(df -h "${REPO_ROOT}" | awk 'NR==2 {print $1}')"
+  avail_mb="$(df -m "${REPO_ROOT}" | awk 'NR==2 {print $4}')"
+  if [ "${avail_mb}" -lt "${need_mb}" ]; then
+    echo "ERROR: only ${avail_mb} MB free on ${volume}; need >= ${need_mb} MB."
+    echo "       Reclaim first, e.g.: rm -rf \${TMPDIR}/tmp.*"
+    echo "                            rm -rf ${REPO_ROOT}/examples/todo-app/app/build ${REPO_ROOT}/seekdb-android/build"
+    exit 1
+  fi
+  echo "  free on ${volume}: ${avail_mb} MB"
+}
+require_free_space 5120
+
+# Snapshot the tracked files this script rewrites (gradle.properties prefix and a
+# manual src/main/jniLibs .so) once, before the first build. Backing up inside
+# stage_engine_zip made the second arm overwrite the first arm's copy, so the
+# original prefix was never put back and gradle.properties was left emptied.
+backup_repo_state() {
+  GP_BACKUP="${WORK_TMP}/gradle.properties.orig"
+  cp -f "${GP}" "${GP_BACKUP}"
+  if [ -f "${JNI_SO}" ]; then
+    JNI_BACKUP="${WORK_TMP}/libseekdb.so.orig"
+    cp -f "${JNI_SO}" "${JNI_BACKUP}"
+    rm -f "${JNI_SO}"
+  else
+    JNI_BACKUP="__none__"
+  fi
+}
 
 extract_so_from_zip() {
-  local zip_path="$1"
-  local tmp_dir
-  tmp_dir="$(mktemp -d)"
+  local zip_path="$1" tmp_dir
+  tmp_dir="$(mktemp -d "${WORK_TMP}/zip.XXXXXX")"
   unzip -oq "${zip_path}" -d "${tmp_dir}" "lib/*/libseekdb.so" 2>/dev/null \
     || unzip -oq "${zip_path}" -d "${tmp_dir}" "*libseekdb.so"
   find "${tmp_dir}" -name libseekdb.so | head -1
@@ -91,15 +135,6 @@ ensure_emulator() {
 
 stage_engine_zip() {
   local zip="$1"
-  GP_BACKUP="$(mktemp)"
-  cp -f "${GP}" "${GP_BACKUP}"
-  if [ -f "${JNI_SO}" ]; then
-    JNI_BACKUP="$(mktemp)"
-    cp -f "${JNI_SO}" "${JNI_BACKUP}"
-    rm -f "${JNI_SO}"
-  else
-    JNI_BACKUP="__none__"
-  fi
   sed -i '' 's#^LIBSEEKDB_URL_PREFIX=.*#LIBSEEKDB_URL_PREFIX=#' "${GP}"
   local so_in_zip
   so_in_zip="$(extract_so_from_zip "${zip}")"
@@ -115,7 +150,7 @@ verify_apk_so() {
   local apk="$1"
   local zip="$2"
   local tmp
-  tmp="$(mktemp -d)"
+  tmp="$(mktemp -d "${WORK_TMP}/apk.XXXXXX")"
   unzip -oq "${apk}" "lib/arm64-v8a/libseekdb.so" -d "${tmp}"
   local so_apk so_zip
   so_apk="$(find "${tmp}" -name libseekdb.so | head -1)"
@@ -182,6 +217,7 @@ fetch_zip "${BASELINE_SHA}"
 fetch_zip "${OPT_SHA}"
 ZIP_BASE="/tmp/${BASE_SHORT}-libseekdb.zip"
 ZIP_OPT="/tmp/${OPT_SHORT}-libseekdb.zip"
+backup_repo_state
 
 echo "== [2/6] build baseline APK (${BASE_SHORT}) =="
 stage_engine_zip "${ZIP_BASE}" "Baseline"

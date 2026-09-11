@@ -746,6 +746,47 @@ bash docs/seekdb-android/measure/compare_ab_interleaved.sh \
 验证：ab29–ab34 一批跑完磁盘从 25 GB 升到 26 GB（旧行为是每批净减 ~3 GB），批后只剩 2 个
 未过 15 分钟保护期的 `tmp.*` 目录。
 
+### 补记（21:25）：同一根因下还漏掉三处，已一并修掉
+
+上面只覆盖了 `remeasure.sh` 的两个 `mktemp -d` 和"目录"型残留，收尾复验时在 `$TMPDIR` 里
+又找到一枚 **141 MB 的裸文件** `tmp.Ofi6ldYdXL`（`file` 判定：ELF 64-bit ARM aarch64 shared
+object，`sha256` 前缀 `295c627a…`，mtime 今早 10:25），说明泄漏面比上一节写的更大：
+
+1. **`remeasure.sh` 的 manual-.so 备份**用独立 `mktemp` 建了个 148 MB 的临时**文件**
+   （不在 `WORK_TMP` 里）：trap 正常跑完时会被 `mv` 消费掉，但进程被 kill 就整枚留下。
+   已改为 `JNI_BACKUP="${WORK_TMP}/libseekdb.so.orig"`，由同一个 `trap cleanup EXIT` 兜底
+   （`cleanup` 先 `restore_manual_so` 再 `rm -rf WORK_TMP`，顺序不变）。
+2. **`compare_ab_emulator.sh` 完全没做清理**：`extract_so_from_zip()` 每次调用都 `mktemp -d`
+   解一份 148 MB 的 `.so`，一次运行至少调 4 次（两臂各 1 次 + 两次 APK 校验），
+   `verify_apk_so()` 自己再建一个临时目录——单次运行泄漏约 600 MB。已改为统一
+   `WORK_TMP="$(mktemp -d)"` + `trap cleanup EXIT`，zip 解包/APK 校验的临时目录都挂在
+   `WORK_TMP` 下，并复用 `require_free_space`（≥5 GB 门禁）。
+3. **同一脚本的备份会被第二臂覆盖**：`GP_BACKUP`/`JNI_BACKUP` 原本在 `stage_engine_zip()` 里
+   每次 stage 都重新赋值，第二臂覆盖掉第一臂的备份，EXIT 时 `mv` 回去的是"已被清空前缀"的
+   `gradle.properties` —— 即脚本跑完后跟踪文件里的 `LIBSEEKDB_URL_PREFIX` 会留空
+   （正是 `remeasure.sh` 头部注释里记录过的"仓库文件被改脏"事故）。已把备份提到首臂构建之前
+   做一次（新增 `backup_repo_state()`，早于任何 stage）。
+4. **`sweep_stale_temp` 只删目录**，删不掉上面那枚裸文件。已扩展为：`tmp.*` 目录内部含
+   `libseekdb.so`，或 `tmp.*` **裸文件** ≥100 MB 且 `file` 判为 aarch64 shared object；
+   15 分钟保护期与"只认自家指纹"的原则不变。
+
+自测（构造样本 + 单独 eval 出 `sweep_stale_temp`，`TMPDIR` 指向沙箱）：
+
+```text
+swept 142 MB of stale engine temp leftovers under /tmp/sweeptest.aQX02I
+KEEP ok: tmp.keepdir   （旧目录、无 libseekdb.so）
+KEEP ok: tmp.freshdir  （含 libseekdb.so，但未过 15 分钟保护期）
+KEEP ok: tmp.smallfile （旧的小文件，1 KB）
+SWEPT ok: tmp.staledir （旧目录、含 libseekdb.so）
+SWEPT ok: tmp.stalefile（旧的 148 MB aarch64 .so）
+```
+
+`restore_manual_so` + 新 `cleanup` 的还原逻辑也单独跑过：备份放在 `WORK_TMP` 时，
+`cleanup` 后 `jniLibs` 内容回到 ORIGINAL、`WORK_TMP` 整个消失、无残留 `.orig` 文件。
+
+真机上的三处历史残留（1 枚 141 MB 裸文件 + 2 个 142 MB 目录）已手工回收，磁盘从 26 GB
+回到 27 GB；`$TMPDIR` 里剩下的 8 个 `tmp.*` 全是其他程序的小文件（合计 24 KB），不在指纹内。
+
 ### 复验：ab28 补齐 + launch2 采集窗口 12 s → 30 s
 
 - ab23–ab28 重跑通过，`ab28`（先前只剩 `run.txt`）已补全 launch1/2/3 日志；重跑前的旧产物

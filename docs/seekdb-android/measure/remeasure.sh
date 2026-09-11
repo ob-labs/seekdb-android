@@ -66,6 +66,8 @@ JNI_BACKUP=""
 # per run) lives under WORK_TMP and is removed on exit. The old per-call
 # `mktemp -d` never cleaned up, so a 6-round batch leaked ~1.8 GB and filled the
 # disk mid-batch (`unzip: write error (disk full?)`, see ab19-ab22 / ab28).
+# The manual-.so backup below is kept inside WORK_TMP for the same reason: a
+# standalone `mktemp` file is a 148 MB leak whenever the trap does not run.
 WORK_TMP="$(mktemp -d)"
 
 # Only a manual .so overridden for a local-zip build is restored on exit;
@@ -80,6 +82,7 @@ restore_manual_so() {
     fi
   fi
 }
+
 cleanup() {
   restore_manual_so
   if [ -n "${WORK_TMP}" ]; then
@@ -136,7 +139,7 @@ echo "  .so in zip: $(shasum -a 256 "${SO_IN_ZIP}" | cut -c1-16)…"
 echo "== [2/7] stage engine (engine prefix passed as a Gradle property) =="
 if [ -n "${LOCAL_ZIP}" ]; then
   if [ -f "${JNI_SO}" ]; then
-    JNI_BACKUP="$(mktemp)"
+    JNI_BACKUP="${WORK_TMP}/libseekdb.so.orig"
     cp -f "${JNI_SO}" "${JNI_BACKUP}"
     rm -f "${JNI_SO}"
   else
