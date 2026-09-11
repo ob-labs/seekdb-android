@@ -13,3 +13,5 @@
 - `inspector-setup.md`: Database Inspector (`debugImplementation` + AndroidX snapshot repo for `androidx.inspection`).
 - `local-dev-guide.md`: local build/test workflow without Gradle wrapper.
 - `seekdb-engine-android.md`: SeekDB engine (`seekdb` repo) + Android embed required changes, build, and verification (`libseekdb.so`, pm clear, cold instrument run).
+- `android-startup-timeline-measurement-2026-09-07.md`: on-device cold/warm startup timeline measurements (`SeekdbStartup` logcat stages), A/B batches per engine commit, and the engine-side drill-down that followed.
+- `measure/`: measurement tooling — `parse_startup.py` (logcat timeline parser) plus `remeasure.sh`, `compare_ab_interleaved.sh`, `compare_ab_emulator.sh`, and `test_data_persist.sh` (each script's header documents its usage and artifacts).

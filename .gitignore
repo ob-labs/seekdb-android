@@ -14,3 +14,7 @@ seekdb-android-inspection/build/
 /captures
 
 # Native engine binaries are downloaded at build time or copied locally; never commit them.
+
+# Python bytecode from the measurement tooling
+__pycache__/
+*.pyc
